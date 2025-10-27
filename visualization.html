@@ -1,8 +1,362 @@
 <!doctype html>
-<html>
-  <head><meta charset="utf-8"><title>Visualization</title></head>
-  <body>
-    <h1>Visualization page — signed in</h1>
-    <p>Replace with your Three.js code.</p>
-  </body>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>3D Visualization — Periodic Table Style</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    html,body{height:100%;margin:0;background:#111;color:#fff;font-family:Arial,Helvetica,sans-serif}
+    #container{position:relative;height:100vh;overflow:hidden}
+    .element{
+      width: 140px; height: 160px;
+      border-radius: 8px;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.5);
+      padding:8px; box-sizing:border-box; cursor:pointer;
+      display:flex;flex-direction:column;align-items:center;justify-content:flex-start;
+      font-size:13px;
+    }
+    .element img { width:100%; height:64px; object-fit:cover; border-radius:6px; margin-bottom:6px; }
+    .element .name { font-weight:700; font-size:14px; margin-top:2px; text-align:center; color:#000; }
+    .element .meta { font-size:12px; color:#000; opacity:0.85; margin-top:4px; text-align:center }
+    .controls { position:absolute; left:10px; top:10px; z-index:20; display:flex; gap:8px; }
+    .controls button { background:#222;border:0;color:#fff;padding:8px 10px;border-radius:6px;cursor:pointer }
+    #signin { position:absolute; right:10px; top:10px; z-index:20; }
+    .note { position:absolute; left:10px; bottom:10px; z-index:20; background:rgba(0,0,0,0.5); padding:8px 12px; border-radius:8px; font-size:12px}
+  </style>
+</head>
+<body>
+  <div id="container"></div>
+
+  <div class="controls">
+    <button id="btnTable">TABLE (20x10)</button>
+    <button id="btnSphere">SPHERE</button>
+    <button id="btnHelix">DOUBLE HELIX</button>
+    <button id="btnGrid">GRID (5x4x10)</button>
+  </div>
+
+  <div id="signin"></div>
+  <div class="note">Tiles colored by Net Worth: Red &lt;$100K, Orange &lt;$200K, Green &ge;$200K</div>
+
+  <!-- three.js and CSS3DRenderer -->
+  <script src="https://unpkg.com/three@0.152.2/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.152.2/examples/js/renderers/CSS3DRenderer.js"></script>
+  <!-- tween.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tween.js/18.6.4/tween.umd.js"></script>
+  <!-- Google Identity (only needed if using Sheets API path) -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+
+  <script>
+ 
+  const USE_SHEETS_API = false; // set true to use Sheets API (private spreadsheet)
+https://docs.google.com/spreadsheets/d/e/2PACX-1vRQAOEljj3qH1g7oZoxAjANRZ8u_9DyX2NjhGktnJEJssNNV_ymwQVyaGCUVn3AOz4pFX34U7bJyMUV/pubhtml
+ 
+  /************************************************************************
+   * END CONFIG
+   ************************************************************************/
+
+  // Three.js / CSS3D scaffolding
+  let camera, scene, renderer;
+  const objects = [];
+  const targets = { table: [], sphere: [], helix: [], grid: [] };
+
+  init();
+  animate();
+
+  function init(){
+    const container = document.getElementById('container');
+    camera = new THREE.PerspectiveCamera(40, window.innerWidth/window.innerHeight, 1, 10000);
+    camera.position.z = 3000;
+    scene = new THREE.Scene();
+    renderer = new THREE.CSS3DRenderer();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.domElement.style.position = 'absolute';
+    container.appendChild(renderer.domElement);
+
+    // Buttons
+    document.getElementById('btnTable').addEventListener('click', ()=>transform(targets.table, 2000));
+    document.getElementById('btnSphere').addEventListener('click', ()=>transform(targets.sphere, 2000));
+    document.getElementById('btnHelix').addEventListener('click', ()=>transform(targets.helix, 2000));
+    document.getElementById('btnGrid').addEventListener('click', ()=>transform(targets.grid, 2000));
+
+    // Load data
+    if (!USE_SHEETS_API) {
+      if (!SHEET_CSV_URL || SHEET_CSV_URL.indexOf("REPLACE_WITH") !== -1) {
+        alert("Please set SHEET_CSV_URL in the config to your published CSV URL, or enable USE_SHEETS_API and set OAuth + Spreadsheet ID.");
+      } else {
+        loadFromCsv(SHEET_CSV_URL);
+      }
+    } else {
+      renderGoogleSignInButton();
+    }
+
+    window.addEventListener('resize', onWindowResize);
+  }
+
+  function onWindowResize(){
+    camera.aspect = window.innerWidth/window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  }
+
+  /*******************************
+   * CSV Loading & Mapping
+   ********************************/
+  async function loadFromCsv(url){
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("CSV fetch failed");
+      const text = await res.text();
+      const rows = csvToArray(text);
+      if (rows.length < 2) throw new Error("No data found in CSV");
+      const headers = rows.shift().map(h => h.trim());
+      const items = rows.map(r => mapRowToItem(headers, r));
+      buildObjects(items);
+    } catch (err) {
+      console.error(err);
+      alert("Error loading CSV: " + err.message);
+    }
+  }
+
+  // basic CSV parser: handles commas and quoted fields
+  function csvToArray(str) {
+    const lines = str.trim().split(/\r?\n/);
+    const out = lines.map(line => {
+      const row = [];
+      let cur = '', inQuotes = false;
+      for (let i=0;i<line.length;i++){
+        const ch = line[i];
+        if (ch === '"' ) { inQuotes = !inQuotes; continue; }
+        if (ch === ',' && !inQuotes) { row.push(cur); cur = ''; continue; }
+        cur += ch;
+      }
+      row.push(cur);
+      return row;
+    });
+    return out;
+  }
+
+  function mapRowToItem(headers, row){
+    const obj = {};
+    for (let i=0;i<headers.length;i++){
+      obj[ headers[i] ] = (row[i] || '').trim();
+    }
+    // normalize fields we expect
+    const netRaw = obj['Net Worth'] || obj['NetWorth'] || obj['Net_Worth'] || obj[' Net Worth'] || '';
+    obj._netWorth = parseFloat((netRaw + '').replace(/[^0-9.-]+/g,'')) || 0;
+    obj._name = obj['Name'] || '';
+    obj._photo = obj['Photo'] || '';
+    obj._age = obj['Age'] || '';
+    obj._country = obj['Country'] || '';
+    obj._interest = obj['Interest'] || '';
+    return obj;
+  }
+
+  /*******************************
+   * Google sign-in & Sheets API path
+   ********************************/
+  function renderGoogleSignInButton(){
+    // show a simple authorize button
+    const container = document.getElementById('signin');
+    const btn = document.createElement('button');
+    btn.textContent = 'Authorize Google Sheets';
+    btn.style.padding = '8px 12px';
+    btn.style.borderRadius = '6px';
+    btn.style.border = 'none';
+    btn.style.background = '#1a73e8';
+    btn.style.color = '#fff';
+    btn.onclick = requestSheetsToken;
+    container.appendChild(btn);
+  }
+
+  // Call this to request access token and then fetch sheet
+  function requestSheetsToken(){
+    if (!OAUTH_CLIENT_ID || OAUTH_CLIENT_ID.indexOf("REPLACE_WITH") !== -1) {
+      alert("Set OAUTH_CLIENT_ID in config.");
+      return;
+    }
+    // init token client
+    const tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: OAUTH_CLIENT_ID,
+      scope: 'https://www.googleapis.com/auth/spreadsheets.readonly',
+      callback: (tokenResponse) => {
+        if (tokenResponse && tokenResponse.access_token) {
+          // call sheets api
+          fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_RANGE)}`, {
+            headers: { Authorization: 'Bearer ' + tokenResponse.access_token }
+          }).then(r => r.json()).then(json => {
+            const rows = json.values;
+            if (!rows || rows.length < 2) { alert('No data returned from Sheets API'); return; }
+            const headers = rows.shift();
+            const items = rows.map(r => mapRowToItem(headers, r));
+            buildObjects(items);
+          }).catch(err => { console.error(err); alert('Sheets API error: ' + err.message) });
+        } else {
+          alert('No access token obtained');
+        }
+      }
+    });
+    // request token (this opens consent)
+    tokenClient.requestAccessToken();
+  }
+
+  /*******************************
+   * Build visual elements (CSS3D)
+   ********************************/
+  function buildObjects(items){
+    // clear previous
+    while (scene.children.length) scene.remove(scene.children[0]);
+    objects.length = 0;
+    targets.table.length = targets.sphere.length = targets.helix.length = targets.grid.length = 0;
+
+    // create CSS elements
+    items.forEach((it, i) => {
+      const el = document.createElement('div');
+      el.className = 'element';
+      el.style.background = networthColor(it._netWorth);
+      el.style.color = '#000';
+      // image if present
+      if (it._photo) {
+        const img = document.createElement('img');
+        img.src = it._photo;
+        el.appendChild(img);
+      }
+      const nameDiv = document.createElement('div');
+      nameDiv.className = 'name';
+      nameDiv.textContent = it._name;
+      el.appendChild(nameDiv);
+
+      const metaDiv = document.createElement('div');
+      metaDiv.className = 'meta';
+      metaDiv.innerHTML = `${it._age ? (it._age + ' yrs') : ''} ${it._country ? ' • ' + it._country : ''}<br>${it._interest ? it._interest : ''}<br><strong>${formatMoney(it._netWorth)}</strong>`;
+      el.appendChild(metaDiv);
+
+      // click -> optional details
+      el.addEventListener('click', ()=> {
+        alert(`${it._name}\nAge: ${it._age}\nCountry: ${it._country}\nInterest: ${it._interest}\nNet Worth: ${formatMoney(it._netWorth)}`);
+      });
+
+      const obj = new THREE.CSS3DObject(el);
+      obj.position.x = Math.random() * 4000 - 2000;
+      obj.position.y = Math.random() * 4000 - 2000;
+      obj.position.z = Math.random() * 4000 - 2000;
+      scene.add(obj);
+      objects.push(obj);
+
+      // Table targets (20 x 10)
+      const tableObj = new THREE.Object3D();
+      const col = i % 20;
+      const row = Math.floor(i / 20);
+      tableObj.position.x = (col * 160) - ( (20 * 160) / 2 ) + 80;
+      tableObj.position.y = - (row * 200) + ( (10 * 200) / 2 ) - 100;
+      targets.table.push(tableObj);
+
+      // Sphere
+      const vector = new THREE.Vector3();
+      const spherical = new THREE.Spherical();
+      spherical.radius = 900;
+      spherical.phi = Math.acos( -1 + ( 2 * i ) / items.length );
+      spherical.theta = Math.sqrt(items.length * Math.PI) * spherical.phi;
+      vector.setFromSpherical(spherical);
+      const sphereObj = new THREE.Object3D();
+      sphereObj.position.copy(vector);
+      sphereObj.lookAt(new THREE.Vector3(0,0,0));
+      targets.sphere.push(sphereObj);
+
+      // temporary single helix (we replace with double below)
+      const helixObj = new THREE.Object3D();
+      const helixRadius = 600;
+      const helixTheta = i * 0.3;
+      const helixY = -(i * 8) + 500;
+      helixObj.position.x = Math.cos(helixTheta) * helixRadius;
+      helixObj.position.y = helixY;
+      helixObj.position.z = Math.sin(helixTheta) * helixRadius;
+      helixObj.lookAt(new THREE.Vector3(0, helixY, 0));
+      targets.helix.push(helixObj);
+
+      // Grid 5 x 4 x 10 (x,y,z)
+      const gridObj = new THREE.Object3D();
+      const gridX = i % 5;
+      const gridY = Math.floor((i / 5) % 4);
+      const gridZ = Math.floor(i / (5*4));
+      gridObj.position.x = (gridX * 420) - ( (5*420)/2 ) + 210;
+      gridObj.position.y = - (gridY * 420) + ( (4*420)/2 ) - 210;
+      gridObj.position.z = (gridZ * 420) - ( (10*420)/2 ) + 210;
+      targets.grid.push(gridObj);
+    });
+
+    // Replace single helix with double helix arrangement
+    createDoubleHelixTargets(items.length);
+
+    // Default view: table
+    transform(targets.table, 2000);
+  }
+
+  // Create a double helix targets array (two interleaved strands)
+  function createDoubleHelixTargets(total){
+    targets.helix.length = 0;
+    const radius = 600;
+    const separation = 140; // offset between strands
+    const pitch = 12; // vertical distance between successive tiles in a strand
+    // We'll place items alternating across two strands so both have roughly total/2
+    let indexA = 0, indexB = 0;
+    for (let i=0;i<total;i++){
+      const strand = (i % 2 === 0) ? 0 : 1;
+      const indexInStrand = (strand === 0) ? indexA++ : indexB++;
+      const theta = indexInStrand * 0.45; // angle step
+      const y = -(indexInStrand * pitch) + ( (Math.ceil(total/2) * pitch) / 2 );
+      const obj = new THREE.Object3D();
+      const offset = (strand === 0) ? separation/2 : -separation/2;
+      obj.position.x = Math.cos(theta) * radius + offset;
+      obj.position.z = Math.sin(theta) * radius;
+      obj.position.y = y;
+      obj.lookAt(new THREE.Vector3(0, y, 0));
+      targets.helix.push(obj);
+    }
+  }
+
+  /*******************************
+   * TRANSFORM (tween)
+   ********************************/
+  function transform(targetArray, duration){
+    TWEEN.removeAll();
+    for (let i=0;i<objects.length;i++){
+      const obj = objects[i];
+      const target = targetArray[i];
+      if (!target) continue;
+      new TWEEN.Tween(obj.position)
+        .to({ x: target.position.x, y: target.position.y, z: target.position.z }, Math.random() * duration + duration)
+        .easing(TWEEN.Easing.Exponential.InOut)
+        .start();
+      new TWEEN.Tween(obj.rotation)
+        .to({ x: target.rotation.x, y: target.rotation.y, z: target.rotation.z }, Math.random() * duration + duration)
+        .easing(TWEEN.Easing.Exponential.InOut)
+        .start();
+    }
+    new TWEEN.Tween(this).to({}, duration * 2).onUpdate(render).start();
+  }
+
+  function animate(){
+    requestAnimationFrame(animate);
+    TWEEN.update();
+    render();
+  }
+  function render(){
+    renderer.render(scene, camera);
+  }
+
+  /*******************************
+   * Helpers
+   ********************************/
+  function networthColor(n){
+    if (n < 100000) return "#ff7b7b";         // red-ish
+    if (n < 200000) return "#ffb86b";         // orange-ish
+    return "#9cff8e";                         // green-ish
+  }
+  function formatMoney(n){
+    if (!n) return "$0";
+    return "$" + n.toLocaleString();
+  }
+  </script>
+</body>
 </html>
+
