@@ -2,88 +2,300 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>3D Data Periodic Table — Demo (Adjusted Columns)</title>
+  <title>3D Periodic-Table Style Visualization</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
-    html,body { height:100%; margin:0; font-family: Arial, Helvetica, sans-serif; background:#111; color:#fff; }
-    #container { position:relative; width:100%; height:100vh; overflow:hidden; }
-    .element {
-      width: 140px; height: 180px;
-      box-shadow: 0 8px 20px rgba(0,0,0,.6);
-      border-radius: 10px;
-      text-align:center;
-      padding:8px;
+    html,body{height:100%;margin:0;background:#111;color:#fff;font-family:Arial,Helvetica,sans-serif;overflow:hidden}
+    #container{position:relative;height:100vh; width:100vw; overflow:hidden}
+    .element{
+      width: 160px;
+      height: 200px;
+      border-radius:10px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+      padding:10px;
       box-sizing:border-box;
       cursor:pointer;
       display:flex;
       flex-direction:column;
+      align-items:center;
       justify-content:flex-start;
-      gap:6px;
+      color:#000;
+      font-family: Arial, Helvetica, sans-serif;
     }
-    .element img { width:100%; height:70px; object-fit:cover; border-radius:8px; }
-    .element .name { font-size:14px; font-weight:700; }
-    .element .meta { font-size:12px; opacity:.9; }
-    .controls { position:absolute; left:10px; top:10px; z-index:10; }
-    .controls button { margin-right:6px; padding:8px 12px; border-radius:6px; border:none; background:#222; color:#fff; cursor:pointer; }
-    #signin { position:absolute; right:10px; top:10px; z-index:10; }
+    .element img{ width:80px; height:80px; object-fit:cover; border-radius:50%; margin-bottom:8px; }
+    .element .name { font-weight:700; font-size:15px; text-align:center; line-height:1.1 }
+    .element .meta { font-size:12px; opacity:.85; text-align:center; margin-top:6px }
+    .element .net { font-weight:700; margin-top:8px; text-align:center }
+    .controls { position:absolute; left:12px; top:12px; z-index:50; display:flex; gap:8px }
+    .controls button{ background:#222;border:0;color:#fff;padding:8px 12px;border-radius:8px;cursor:pointer }
+    .note { position:absolute; left:12px; bottom:12px; z-index:50; background:rgba(0,0,0,0.45); padding:8px 12px; border-radius:8px; font-size:13px; color:#ddd }
+    #loading { position:absolute; right:12px; top:12px; z-index:50; background:rgba(0,0,0,0.6); padding:8px 12px; border-radius:8px; color:#fff }
+    /* small modal */
+    #modal { position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); background:#fff; color:#000; padding:18px; border-radius:12px; box-shadow:0 8px 30px rgba(0,0,0,0.6); display:none; z-index:200; max-width:90%; width:420px; }
+    #modal img{ width:100px; height:100px; object-fit:cover; border-radius:8px; float:left; margin-right:12px }
+    #modal .close{ float:right; cursor:pointer; background:#eee; padding:4px 8px; border-radius:6px }
   </style>
 </head>
 <body>
-  <div id="container"></div>
-  <div class="controls" id="controls">
-    <button id="table">TABLE</button>
-    <button id="sphere">SPHERE</button>
-    <button id="helix">HELIX (Double)</button>
-    <button id="grid">GRID</button>
+  <div class="controls">
+    <button id="btnTable">TABLE (20×10)</button>
+    <button id="btnSphere">SPHERE</button>
+    <button id="btnHelix">DOUBLE HELIX</button>
+    <button id="btnGrid">GRID (5×4×10)</button>
   </div>
-  <div id="signin"></div>
 
-  <script src="https://unpkg.com/three@0.152.2/build/three.min.js"></script>
-  <script src="https://unpkg.com/three@0.152.2/examples/js/renderers/CSS3DRenderer.js"></script>
+  <div id="loading">Loading…</div>
+  <div class="note">Tiles: Red &lt;$100K — Orange &ge;$100K &lt;$200K — Green ≥$200K</div>
+  <div id="container"></div>
+
+  <div id="modal">
+    <span class="close" id="modalClose">Close</span>
+    <div id="modalContent"></div>
+  </div>
+
+  <!-- three.js r148 + CSS3DRenderer (compatible) -->
+  <script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r148/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r148/examples/js/renderers/CSS3DRenderer.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/tween.js/18.6.4/tween.umd.js"></script>
 
   <script>
-  /*********************** CONFIG *************************/
-  // Paste your published CSV URL here (File -> Publish to web OR use export?format=csv)
-  const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRQAOEljj3qH1g7oZoxAjANRZ8u_9DyX2NjhGktnJEJssNNV_ymwQVyaGCUVn3AOz4pFX34U7bJyMUV/pub?gid=722838119&single=true&output=csv";
-  const USE_SHEETS_API = false; // keep false for public CSV
-  /********************************************************/
+  // ========== CONFIG ==========
+  const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRQAOEljj3qH1g7oZoxAjANRZ8u_9DyX2NjhGktnJEJssNNV_ymwQVyaGCUVn3AOz4pFX34U7bJyMUV/pub?output=csv";
+  // ============================
 
+  // Renderer + scene variables
+  const container = document.getElementById('container');
   let camera, scene, renderer;
   const objects = [];
-  const targets = { table:[], sphere:[], helix:[], grid:[] };
+  const targets = { table: [], sphere: [], helix: [], grid: [] };
+
+  document.getElementById('btnTable').addEventListener('click', () => transform(targets.table, 1500));
+  document.getElementById('btnSphere').addEventListener('click', () => transform(targets.sphere, 1500));
+  document.getElementById('btnHelix').addEventListener('click', () => transform(targets.helix, 1500));
+  document.getElementById('btnGrid').addEventListener('click', () => transform(targets.grid, 1500));
+
+  // Modal
+  const modal = document.getElementById('modal');
+  const modalContent = document.getElementById('modalContent');
+  document.getElementById('modalClose').addEventListener('click', ()=> modal.style.display='none');
 
   init();
   animate();
 
-  function init(){
-    const container = document.getElementById('container');
-
-    camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 1, 10000);
-    camera.position.z = 3000;
-
+  async function init(){
+    camera = new THREE.PerspectiveCamera(40, window.innerWidth/window.innerHeight, 1, 20000);
+    camera.position.z = 3200;
     scene = new THREE.Scene();
 
-    renderer = new THREE.CSS3DRenderer();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.domElement.style.position = 'absolute';
-    container.appendChild(renderer.domElement);
+    // fetch CSV (robust parse)
+    try {
+      document.getElementById('loading').textContent = 'Fetching sheet CSV…';
+      const res = await fetch(SHEET_CSV_URL);
+      if (!res.ok) throw new Error('Failed to fetch sheet: ' + res.status);
+      const text = await res.text();
+      const rows = parseCSV(text);
+      if (rows.length < 2) throw new Error('No data found in CSV');
 
-    document.getElementById('table').addEventListener('click', () => transform(targets.table, 2000));
-    document.getElementById('sphere').addEventListener('click', () => transform(targets.sphere, 2000));
-    document.getElementById('helix').addEventListener('click', () => transform(targets.helix, 2000));
-    document.getElementById('grid').addEventListener('click', () => transform(targets.grid, 2000));
+      const headers = rows[0].map(h => h.trim());
+      const dataRows = rows.slice(1).filter(r => r.join('').trim() !== '');
 
-    if (SHEET_CSV_URL && SHEET_CSV_URL !== "REPLACE_WITH_PUBLISHED_CSV_URL") {
-      loadFromCsv(SHEET_CSV_URL);
-    } else {
-      const el = document.createElement('div');
-      el.style.position='absolute'; el.style.left='10px'; el.style.bottom='10px'; el.style.zIndex=20;
-      el.innerHTML = '<div style="background:#222;padding:10px;border-radius:6px;">Paste your published CSV URL in the script (SHEET_CSV_URL) and reload.</div>';
-      document.body.appendChild(el);
+      // create elements from dataRows
+      dataRows.forEach((row, i) => {
+        const obj = mapRow(headers, row);
+        createTile(obj, i);
+      });
+
+      if (objects.length === 0) throw new Error('No valid rows found');
+
+      // create targets:
+      createTableTargets(objects.length);     // 20x10
+      createSphereTargets(objects.length);
+      createDoubleHelixTargets(objects.length);
+      createGridTargets(objects.length);      // 5x4x10
+
+      // renderer
+      renderer = new THREE.CSS3DRenderer();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      container.appendChild(renderer.domElement);
+
+      // initial view
+      transform(targets.table, 1200);
+      document.getElementById('loading').style.display = 'none';
+      window.addEventListener('resize', onWindowResize, false);
+
+    } catch (err) {
+      document.getElementById('loading').textContent = 'Error: ' + err.message;
+      console.error(err);
     }
+  }
 
-    window.addEventListener('resize', onWindowResize, false);
+  // CSV parser that respects quotes and commas
+  function parseCSV(text){
+    const lines = [];
+    let cur = '', inQuotes = false, row = [];
+    for (let i=0;i<text.length;i++){
+      const ch = text[i];
+      if (ch === '"') {
+        const next = text[i+1];
+        if (inQuotes && next === '"') { // escaped quote
+          cur += '"'; i++; continue;
+        }
+        inQuotes = !inQuotes;
+        continue;
+      }
+      if (ch === ',' && !inQuotes) { row.push(cur); cur=''; continue; }
+      if ((ch === '\n' || ch === '\r') && !inQuotes) {
+        if (cur !== '' || row.length) { row.push(cur); lines.push(row); row = []; cur=''; }
+        // handle \r\n
+        if (ch === '\r' && text[i+1] === '\n') i++;
+        continue;
+      }
+      cur += ch;
+    }
+    // last
+    if (cur !== '' || row.length) { row.push(cur); lines.push(row); }
+    return lines;
+  }
+
+  function mapRow(headers, row){
+    const out = {};
+    for (let i=0;i<headers.length;i++){
+      out[headers[i]] = (row[i] !== undefined) ? row[i].trim() : '';
+    }
+    // normalize:
+    out.Name = out['Name'] || out['name'] || '';
+    out.Photo = out['Photo'] || out['photo'] || '';
+    out.Age = out['Age'] || out['age'] || '';
+    out.Country = out['Country'] || out['country'] || '';
+    out.Interest = out['Interest'] || out['interest'] || '';
+    const rawNet = out['Net Worth'] || out['NetWorth'] || out['Net_Worth'] || out[' Net Worth'] || '';
+    const clean = (rawNet+'').replace(/[^0-9.-]+/g,'');
+    out.NetWorth = rawNet;
+    out.NetWorthNumber = clean === '' ? 0 : Number(clean);
+    return out;
+  }
+
+  function createTile(data, index){
+    const el = document.createElement('div');
+    el.className = 'element';
+    el.style.background = colorByNet(data.NetWorthNumber);
+
+    el.innerHTML = `
+      <img src="${escapeHtml(data.Photo)}" onerror="this.style.display='none'">
+      <div class="name">${escapeHtml(data.Name)}</div>
+      <div class="meta">${escapeHtml(data.Age)} yrs • ${escapeHtml(data.Country)}</div>
+      <div class="meta">${escapeHtml(data.Interest)}</div>
+      <div class="net">${escapeHtml(data.NetWorth)}</div>
+    `;
+
+    // click to open modal with details
+    el.addEventListener('click', () => {
+      modalContent.innerHTML = `
+        <img src="${escapeHtml(data.Photo)}" onerror="this.style.display='none'">
+        <div>
+          <h3 style="margin:0 0 6px 0">${escapeHtml(data.Name)}</h3>
+          <div>Age: ${escapeHtml(data.Age)}</div>
+          <div>Country: ${escapeHtml(data.Country)}</div>
+          <div>Interest: ${escapeHtml(data.Interest)}</div>
+          <div style="margin-top:8px; font-weight:700">${escapeHtml(data.NetWorth)}</div>
+        </div>
+      `;
+      modal.style.display = 'block';
+    });
+
+    const object = new THREE.CSS3DObject(el);
+    object.position.x = Math.random()*4000 - 2000;
+    object.position.y = Math.random()*4000 - 2000;
+    object.position.z = Math.random()*4000 - 2000;
+    scene.add(object);
+    objects.push(object);
+  }
+
+  // create Table (20 x 10)
+  function createTableTargets(count){
+    targets.table.length = 0;
+    for (let i=0;i<count;i++){
+      const obj = new THREE.Object3D();
+      const col = i % 20;
+      const row = Math.floor(i/20);
+      obj.position.x = (col * 180) - ( (20 * 180) / 2 ) + 90;
+      obj.position.y = - (row * 220) + ( (10 * 220) / 2 ) - 110;
+      obj.position.z = 0;
+      targets.table.push(obj);
+    }
+  }
+
+  // create Sphere
+  function createSphereTargets(count){
+    targets.sphere.length = 0;
+    const vector = new THREE.Vector3();
+    const spherical = new THREE.Spherical();
+    for (let i=0;i<count;i++){
+      const phi = Math.acos(-1 + (2 * i) / count);
+      const theta = Math.sqrt(count * Math.PI) * phi;
+      const obj = new THREE.Object3D();
+      spherical.set(900, phi, theta);
+      obj.position.setFromSpherical(spherical);
+      vector.copy(obj.position).multiplyScalar(2);
+      obj.lookAt(vector);
+      targets.sphere.push(obj);
+    }
+  }
+
+  // double helix (two interleaved strands)
+  function createDoubleHelixTargets(total){
+    targets.helix.length = 0;
+    const radius = 700;
+    const separation = 140;
+    const pitch = 12;
+    let ai = 0, bi = 0;
+    for (let i=0;i<total;i++){
+      const strand = (i % 2 === 0) ? 0 : 1;
+      const idx = strand === 0 ? ai++ : bi++;
+      const theta = idx * 0.45;
+      const y = -(idx * pitch) + ( (Math.ceil(total/2) * pitch) / 2 );
+      const obj = new THREE.Object3D();
+      const offset = (strand === 0) ? separation/2 : -separation/2;
+      obj.position.x = Math.cos(theta) * radius + offset;
+      obj.position.z = Math.sin(theta) * radius;
+      obj.position.y = y;
+      obj.lookAt(new THREE.Vector3(0,y,0));
+      targets.helix.push(obj);
+    }
+  }
+
+  // grid 5 x 4 x 10
+  function createGridTargets(count){
+    targets.grid.length = 0;
+    for (let i=0;i<count;i++){
+      const obj = new THREE.Object3D();
+      const gx = i % 5;
+      const gy = Math.floor((i / 5) % 4);
+      const gz = Math.floor(i / (5*4));
+      obj.position.x = (gx * 420) - ( (5*420)/2 ) + 210;
+      obj.position.y = - (gy * 420) + ( (4*420)/2 ) - 210;
+      obj.position.z = (gz * 420) - ( (10*420)/2 ) + 210;
+      targets.grid.push(obj);
+    }
+  }
+
+  // animate transform using tween.js
+  function transform(targetsArray, duration){
+    TWEEN.removeAll();
+    for (let i=0;i<objects.length;i++){
+      const object = objects[i];
+      const target = targetsArray[i];
+      if (!target) continue;
+      new TWEEN.Tween(object.position)
+        .to({ x: target.position.x, y: target.position.y, z: target.position.z }, Math.random()*duration + duration)
+        .easing(TWEEN.Easing.Exponential.InOut)
+        .start();
+      new TWEEN.Tween(object.rotation)
+        .to({ x: target.rotation.x || 0, y: target.rotation.y || 0, z: target.rotation.z || 0 }, Math.random()*duration + duration)
+        .easing(TWEEN.Easing.Exponential.InOut)
+        .start();
+    }
+    new TWEEN.Tween(this).to({}, duration * 2).onUpdate(render).start();
   }
 
   function onWindowResize(){
@@ -92,207 +304,26 @@
     renderer.setSize(window.innerWidth, window.innerHeight);
   }
 
-  async function loadFromCsv(url){
-    try {
-      const res = await fetch(url);
-      const text = await res.text();
-      const rows = csvToArray(text);
-      const headers = rows.shift().map(h=>h.trim());
-      const items = rows.map(r => mapRowToItem(headers, r));
-      buildObjects(items);
-    } catch(err){
-      console.error(err);
-      alert("Error loading CSV. Ensure the sheet is published to web and URL is correct.");
-    }
-  }
-
-  function csvToArray(str){
-    const lines = str.trim().split(/\r?\n/).map(l=>l);
-    return lines.map(line => {
-      const out=[]; let cur='', inQuotes=false;
-      for (let i=0;i<line.length;i++){
-        const ch=line[i];
-        if (ch === '"' ){ inQuotes = !inQuotes; continue; }
-        if (ch === ',' && !inQuotes){ out.push(cur); cur=''; continue; }
-        cur += ch;
-      }
-      out.push(cur);
-      return out;
-    });
-  }
-
-  function mapRowToItem(headers, row){
-    const obj = {};
-    for (let i=0;i<headers.length;i++){
-      obj[ headers[i] ] = row[i] ? row[i].trim() : "";
-    }
-    // Normalize expected columns (case-insensitive keys fallback)
-    obj.Name = obj['Name'] || obj['name'] || "";
-    obj.Photo = obj['Photo'] || obj['photo'] || "";
-    obj.Age = obj['Age'] || obj['age'] || "";
-    obj.Country = obj['Country'] || obj['country'] || "";
-    obj.Interest = obj['Interest'] || obj['interest'] || "";
-    const rawNW = obj['Net Worth'] || obj['NetWorth'] || obj['net worth'] || obj['NetWorth'] || "";
-    obj._netWorth = parseFloat((rawNW + "").replace(/[^0-9.-]+/g,"")) || 0;
-    return obj;
-  }
-
-  function buildObjects(items){
-    // reset
-    while(scene.children.length) scene.remove(scene.children[0]);
-    objects.length = 0;
-    targets.table.length = targets.sphere.length = targets.helix.length = targets.grid.length = 0;
-
-    items.forEach((item, i) => {
-      const element = document.createElement('div');
-      element.className = 'element';
-      const color = networthColor(item._netWorth);
-      element.style.background = color;
-      element.style.color = '#000';
-
-      // photo if any
-      if (item.Photo) {
-        const img = document.createElement('img');
-        img.src = item.Photo;
-        img.alt = item.Name || '';
-        element.appendChild(img);
-      }
-
-      const nameEl = document.createElement('div');
-      nameEl.className = 'name';
-      nameEl.textContent = item.Name || `Row ${i+1}`;
-      element.appendChild(nameEl);
-
-      const meta1 = document.createElement('div');
-      meta1.className = 'meta';
-      meta1.textContent = `Age: ${item.Age || '-'} • ${item.Country || '-'}`;
-      element.appendChild(meta1);
-
-      const meta2 = document.createElement('div');
-      meta2.className = 'meta';
-      meta2.textContent = item.Interest || '-';
-      element.appendChild(meta2);
-
-      const netEl = document.createElement('div');
-      netEl.style.marginTop='6px';
-      netEl.style.fontWeight='700';
-      netEl.textContent = formatMoney(item._netWorth);
-      element.appendChild(netEl);
-
-      const cssObject = new THREE.CSS3DObject(element);
-      cssObject.position.x = Math.random() * 4000 - 2000;
-      cssObject.position.y = Math.random() * 4000 - 2000;
-      cssObject.position.z = Math.random() * 4000 - 2000;
-      scene.add(cssObject);
-      objects.push(cssObject);
-
-      // Table (20x10)
-      const tableObj = new THREE.Object3D();
-      const col = i % 20;
-      const row = Math.floor(i / 20);
-      tableObj.position.x = (col * 160) - ( (20 * 160) / 2 ) + 80;
-      tableObj.position.y = - (row * 200) + ( (10 * 200) / 2 ) - 100;
-      targets.table.push(tableObj);
-
-      // Sphere
-      const vector = new THREE.Vector3();
-      const spherical = new THREE.Spherical();
-      spherical.radius = 900;
-      spherical.phi = Math.acos( -1 + ( 2 * i ) / items.length );
-      spherical.theta = Math.sqrt(items.length * Math.PI) * spherical.phi;
-      vector.setFromSpherical(spherical);
-      const sphereObj = new THREE.Object3D();
-      sphereObj.position.copy(vector);
-      sphereObj.lookAt(new THREE.Vector3(0,0,0));
-      targets.sphere.push(sphereObj);
-
-      // Helix placeholder (will be replaced by double helix generator)
-      const helixObj = new THREE.Object3D();
-      const theta = i * 0.35;
-      const helixRadius = 700;
-      const helixY = - (i * 10) + 600;
-      helixObj.position.x = Math.cos(theta) * helixRadius;
-      helixObj.position.y = helixY;
-      helixObj.position.z = Math.sin(theta) * helixRadius;
-      helixObj.lookAt(new THREE.Vector3(0, helixY, 0));
-      targets.helix.push(helixObj);
-
-      // Grid 5x4x10
-      const gridObj = new THREE.Object3D();
-      const gridX = i % 5;
-      const gridY = Math.floor((i / 5) % 4);
-      const gridZ = Math.floor(i / (5*4));
-      gridObj.position.x = (gridX * 450) - ( (5*450)/2 ) + 225;
-      gridObj.position.y = - (gridY * 450) + ( (4*450)/2 ) - 225;
-      gridObj.position.z = (gridZ * 450) - ( (10*450)/2 ) + 225;
-      targets.grid.push(gridObj);
-    });
-
-    // replace helix targets with double helix
-    createDoubleHelixTargets(items.length);
-
-    // start in table view
-    transform(targets.table, 2000);
-  }
-
-  function createDoubleHelixTargets(total){
-    targets.helix.length = 0;
-    const radius = 700;
-    const separation = 150;
-    for (let i=0;i<total;i++){
-      const strand = i % 2 === 0 ? 0 : 1;
-      const indexInStrand = Math.floor(i/2);
-      const theta = indexInStrand * 0.45;
-      const y = -(indexInStrand * 14) + (total/2 * 7) - 120;
-      const obj = new THREE.Object3D();
-      const offset = (strand === 0) ? separation/2 : -separation/2;
-      obj.position.x = Math.cos(theta) * radius + offset;
-      obj.position.z = Math.sin(theta) * radius;
-      obj.position.y = y;
-      obj.lookAt(new THREE.Vector3(0, y, 0));
-      targets.helix.push(obj);
-    }
-  }
-
-  function transform(targetArr, duration){
-    TWEEN.removeAll();
-    for (let i=0;i<objects.length;i++){
-      const object = objects[i];
-      const target = targetArr[i];
-      if (!target) continue;
-      new TWEEN.Tween(object.position)
-        .to({ x: target.position.x, y: target.position.y, z: target.position.z }, Math.random()*duration + duration)
-        .easing(TWEEN.Easing.Exponential.InOut)
-        .start();
-      new TWEEN.Tween(object.rotation)
-        .to({ x: target.rotation.x, y: target.rotation.y, z: target.rotation.z }, Math.random()*duration + duration)
-        .easing(TWEEN.Easing.Exponential.InOut)
-        .start();
-    }
-    new TWEEN.Tween(this).to({}, duration*2).onUpdate(render).start();
-  }
-
   function animate(){
     requestAnimationFrame(animate);
     TWEEN.update();
-    render();
+    renderer && renderer.render(scene, camera);
   }
 
   function render(){
     renderer.render(scene, camera);
   }
 
-  function networthColor(n){
-    if (n < 100000) return "#ff7b7b"; // red
-    if (n < 200000) return "#ffb86b"; // orange
-    return "#9cff8e"; // green
+  function colorByNet(n){
+    n = Number(n) || 0;
+    if (n < 100000) return '#ff7b7b'; // red-ish
+    if (n < 200000) return '#ffb86b'; // orange-ish
+    return '#9cff8e';                 // green-ish
   }
 
-  function formatMoney(n){
-    if (!n) return "$0";
-    return "$" + n.toLocaleString();
-  }
+  function escapeHtml(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function formatMoney(n){ n = Number(n)||0; return '$' + n.toLocaleString(); }
+
   </script>
 </body>
 </html>
-
